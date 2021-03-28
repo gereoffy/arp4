@@ -1,0 +1,95 @@
+From fa502a8ef7e0f38aefd5f80379bca2c7d81b666a Mon Sep 17 00:00:00 2001
+From: Stefan Schwarz <s.schwarz@united-gameserver.de>
+Date: Thu, 15 Feb 2018 17:06:45 +0100
+Subject: [PATCH] Allow out of order oids
+
+---
+ easysnmp/interface.c | 27 ++++++++++++++-------------
+ easysnmp/session.py  |  7 +++++--
+ 2 files changed, 19 insertions(+), 15 deletions(-)
+
+diff --git a/easysnmp/interface.c b/easysnmp/interface.c
+index 041e77c..8f9c79a 100644
+--- a/easysnmp/interface.c
++++ b/easysnmp/interface.c
+@@ -2578,7 +2578,8 @@ static PyObject *netsnmp_walk(PyObject *self, PyObject *args)
+     PyObject *varlist = NULL;
+     PyObject *varlist_iter;
+     PyObject *varbind;
+-    PyObject *varbinds  = NULL;
++    PyObject *varbinds = NULL;
++    PyObject *ignore_order = NULL;
+     int varlist_len = 0;
+     int varlist_ind;
+     struct session_capsule_ctx *session_ctx = NULL;
+@@ -2624,7 +2625,7 @@ static PyObject *netsnmp_walk(PyObject *self, PyObject *args)
+ 
+     if (args)
+     {
+-        if (!PyArg_ParseTuple(args, "OO", &session, &varlist))
++        if (!PyArg_ParseTuple(args, "OOO", &session, &varlist, &ignore_order))
+         {
+             goto done;
+         }
+@@ -2871,18 +2872,18 @@ static PyObject *netsnmp_walk(PyObject *self, PyObject *args)
+                                          oid_arr_broken_check_len[varlist_ind]) <= 0)
+                     {
+                         /*
+-                           The agent responded with an illegal response
+-                           as the returning OID was lexograghically less
+-                           then or equal to the requested OID...
+-                           We need to give up here because an infinite
+-                           loop will result otherwise.
+-
+-                           XXX: this really should be an option to
+-                           continue like the -Cc option to the snmpwalk
+-                           application.
++                        ** The agent responded with an illegal response
++                        ** as the returning OID was lexograghically less
++                        ** then or equal to the requested OID...
++                        ** If not explicitly set with "ignore_order", we
++                        ** will give up here because an infinite loop
++                        ** can result otherwise.
+                         */
+-                        notdone = 0;
+-                        break;
++                        if (!PyObject_IsTrue(ignore_order))
++                        {
++                            notdone = 0;
++                            break;
++                        }
+                     }
+ 
+                     varbind = py_netsnmp_construct_varbind();
+diff --git a/easysnmp/session.py b/easysnmp/session.py
+index 5218aec..fe97f6e 100644
+--- a/easysnmp/session.py
++++ b/easysnmp/session.py
+@@ -446,7 +446,7 @@ def get_bulk(self, oids, non_repeaters=0, max_repetitions=10):
+         # Return a list of variables
+         return varlist
+ 
+-    def walk(self, oids='.1.3.6.1.2.1'):
++    def walk(self, oids='.1.3.6.1.2.1', ignore_order=False):
+         """
+         Uses SNMP GETNEXT operation using the prepared session to
+         automatically retrieve multiple pieces of information in an OID.
+@@ -456,6 +456,9 @@ def walk(self, oids='.1.3.6.1.2.1'):
+                      entire OID (e.g. 'sysDescr.0') or may be a tuple
+                      containing the name as its first item and index as its
+                      second (e.g. ('sysDescr', 0))
++        :param ignore_order: disables the check if the last oid was
++                             lexograghically lower the one before. use with
++                             caution, this can cause infinite loops.
+         :return: a list of SNMPVariable objects containing the values that
+                  were retrieved via SNMP
+         """
+@@ -464,7 +467,7 @@ def walk(self, oids='.1.3.6.1.2.1'):
+         varlist, _ = build_varlist(oids)
+ 
+         # Perform the SNMP walk using GETNEXT operations
+-        interface.walk(self, varlist)
++        interface.walk(self, varlist, ignore_order)
+ 
+         # Validate the variable list returned
+         if self.abort_on_nonexistent:
