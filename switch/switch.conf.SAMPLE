@@ -1,0 +1,4 @@
+192.168.99.124 HP-124/
+192.168.99.19 Zyxel-19/ GigabitEthernet
+10.65.0.90 Unifi-1/ 0/
+community@192.168.68.250 Cisco2/ Gi1/0/
