@@ -1,23 +1,19 @@
 
-cd /var/arp4/switch
+# cd /var/arp4/switch
 
 cat switch.conf |while read line; do ./list-snmp.py $line ; done >ports.all 2>names.new
 
 ./topology3.sh >topology.new
 
-#for i in $(grep -o '19[23].[.0-9]*' list-all.sh ); do arp -a -n $i ; done|cut -d ' ' -f 4 |tr a-z A-Z >sw-macs.txt
+# lookup switch mac addresses:
+for ip in $(cut -f 1 switch.conf.SAMPLE |cut -d ' ' -f 1|cut -d '@' -f 2) do arp -n $ip ; done | \
+    grep -o '[0-9a-zA-Z][0-9a-zA-Z]:[0-9a-zA-Z][0-9a-zA-Z]:[0-9a-zA-Z][0-9a-zA-Z]:[0-9a-zA-Z][0-9a-zA-Z]:[0-9a-zA-Z][0-9a-zA-Z]:[0-9a-zA-Z][0-9a-zA-Z]' | \
+    tr a-z A-Z >sw-macs.txt
 
+# find the uplink ports (using sw-macs list) and remove the uplink/downlink entries:
 ./normalize.py <ports.all | sort >ports.new
-
-# >D253-ports.txt
-
-
-#cat *-names.txt  >names.txt
-#cat *-ports.txt
 
 mv -f ports.new ports.txt
 mv -f names.new names.txt
 mv -f topology.new topology.txt
 
-#/usr/bin/ssh cache 'cat >/var/arp4/switch/ports.txt' </var/arp4/switch/ports.txt
-# /usr/bin/ssh cache 'cat >/var/arp4/switch/names.txt' </var/arp4/switch/names.txt
