@@ -1,0 +1,36 @@
+Ping/Traffic grapher by A'rpi
+=============================
+
+Dependencies:
+libpng-dev, python3
+
+Build/Install:
+# make
+# mkdir -p /var/arp4/traff/
+# cp *.sh ping.list pingstat3 traffmon2 /var/arp4/traff/
+# cp *.py pingdata pinger traffdata traffer2 /usr/lib/cgi-bin/
+# a2enmod cgi
+# systemctl restart apache2
+
+Running the data collectors:
+============================
+- ping.sh: runs pingstat3, writes data to: /var/pinger/
+(ping.sh will ping IP addresses listed in text file /var/arp4/traff/ping.list)
+- traff.sh: runs traffmon2, writes data to: /var/traffmon/
+(traff.sh will monitor RX/TX traffic of all local ethernet interfaces)
+
+Using the new Web-UI:
+=====================
+Graph UI:  http://IPADDRESS/cgi-bin/graph.py
+- generating JSON data on the server (by cgi-bin/pingdata & traffdata)
+- client side renders it all using heavy javascript
+- recommended for modern web browsers (chrome/firefox)
+
+Using the old Web-UI:
+=====================
+Pinger UI:  http://IPADDRESS/cgi-bin/ping.py
+Traffic UI: http://IPADDRESS/cgi-bin/traff.py
+- generating PNG files on the server (by cgi-bin/pinger & traffer2)
+- client side works without JS, very simple html only page
+- recommended for mobile or smart-tv
+
