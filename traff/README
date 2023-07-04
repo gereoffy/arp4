@@ -2,7 +2,7 @@ Ping/Traffic grapher by A'rpi
 =============================
 
 Dependencies:
-libpng-dev, python3
+libpng-dev, python3, gcc
 
 Build/Install:
 # make
@@ -23,8 +23,11 @@ Using the new Web-UI:
 =====================
 Graph UI:  http://IPADDRESS/cgi-bin/graph.py
 - generating JSON data on the server (by cgi-bin/pingdata & traffdata)
-- client side renders it all using heavy javascript
+- client side renders it all using heavy javascript (canvas draw)
+  (css&js is embedded into graph.py file - a bit ugly but simplifies things)
 - recommended for modern web browsers (chrome/firefox)
+- optional URL parameters: ip (address list), dev (interface list), zoom, time:
+  graph.py?ip=8.8.8.8,1.1.1.1&dev=eth2,eth3,bond1&zoom=500&time=1688505503
 
 Using the old Web-UI:
 =====================

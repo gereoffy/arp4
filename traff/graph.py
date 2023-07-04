@@ -406,7 +406,8 @@ function setupAll(func){
 //    window.location.href=window.location.href.split("?")[0]+"?zoom="+glob_zoom;
 //    window.location.search=window.location.href.split("?")[0]+"?zoom="+glob_zoom;
 //    console.log(window.location.pathname);
-    url=window.location.pathname+"?zoom="+glob_zoom;
+//    url=window.location.pathname+"?zoom="+glob_zoom;
+    url=glob_url+"&zoom="+glob_zoom;
     if(glob_time) url+="&time="+parseInt(glob_time);
     console.log(url);
     history.pushState({}, null, url);
