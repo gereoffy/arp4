@@ -16,7 +16,7 @@ def checksum(data):  # Calc ICMP checksum as in RFC 1071
 
 # pure python parallel pinger
 def pppping(iplist,cnt=5,interval=1,deadline=0,source=None,verbose=False):
-    if not deadline: deadline=cnt*interval+1
+    if not deadline: deadline=cnt*interval+2
     #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.getprotobyname("icmp"))
     sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.getprotobyname("icmp"))
     if source: sock.bind((source, 0))
@@ -55,12 +55,13 @@ def pppping(iplist,cnt=5,interval=1,deadline=0,source=None,verbose=False):
 #        print(source, len(packet), resp, csum) # ('193.224.177.1', 0) 1428 (0, 0, 38736, 26798, 1) 0
         key=(ip,resp[3],resp[4])
         if csum==0:
-            if key in sent:
+            if resp[0]==0 and key in sent:
                 if verbose: print("Received ping from %s time %5.3f ms"%(ip,1000.0*(t-sent[key])))
                 result[ip]+=1
                 del sent[key]
-            elif verbose: print("Unknown reply:",key)
-        elif verbose: print("Bad checksum!", key)
+            elif verbose: print("Unknown reply:",resp)
+#            else: print("Unknown reply:",resp)
+        elif verbose: print("Bad checksum!", resp)
         if p_seq>cnt and len(sent)==0:
             if verbose: print("All OK!!!")
             break # done
