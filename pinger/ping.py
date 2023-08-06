@@ -17,11 +17,16 @@ def checksum(data):  # Calc ICMP checksum as in RFC 1071
 # pure python parallel pinger
 def pppping(iplist,cnt=5,interval=1,deadline=0,source=None,verbose=False):
     if not deadline: deadline=cnt*interval+2
-    #sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.getprotobyname("icmp"))
-    sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.getprotobyname("icmp"))
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_RAW, socket.getprotobyname("icmp"))
+        offset=20
+    except PermissionError:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.getprotobyname("icmp"))
+        offset=0
     if source: sock.bind((source, 0))
 
     p_id=os.getpid()&0x7FFF
+    p_id2=None
     p_seq=1
 #    payload=bytes(1400)
     payload=bytes([0xAA,0x55]*700)
@@ -50,17 +55,25 @@ def pppping(iplist,cnt=5,interval=1,deadline=0,source=None,verbose=False):
 #        print(source, packet[:64].hex(' '))
         t=time.time()
         ip=source[0]
-        resp=struct.unpack("!BBHHH", packet[20:28]) # msg_type, msg_code, checksum, id, seq   (0, 0, 48513, 17021, 1)
-        csum=checksum(packet[20:])
+        resp=struct.unpack("!BBHHH", packet[offset:offset+8]) # msg_type, msg_code, checksum, id, seq   (0, 0, 48513, 17021, 1)
+        # Unknown reply: (0, 0, 15807, 2, 1)
+        csum=checksum(packet[offset:])
 #        print(source, len(packet), resp, csum) # ('193.224.177.1', 0) 1428 (0, 0, 38736, 26798, 1) 0
-        key=(ip,resp[3],resp[4])
         if csum==0:
-            if resp[0]==0 and key in sent:
-                if verbose: print("Received ping from %s time %5.3f ms"%(ip,1000.0*(t-sent[key])))
-                result[ip]+=1
-                del sent[key]
+            if resp[0]==0:
+                key=(ip,resp[3],resp[4])
+                if not key in sent:  # ID mismatch, OK for non-root users...
+                    key=(ip,p_id,resp[4])
+                    if key in sent:
+                        if p_id2==None: p_id2=resp[3] # learn new ID  (IP & seq matched)
+                        elif p_id2!=resp[3] and verbose: print("ID mismatch! %d != %d  (sent %d)"%(p_id2,resp[3],p_id))
+                if key in sent:
+                    p_id2=resp[3]
+                    if verbose: print("Received ping from %s time %5.3f ms"%(ip,1000.0*(t-sent[key])))
+                    result[ip]+=1
+                    del sent[key]
+                elif verbose: print("BAD reply:",key, sent.keys())
             elif verbose: print("Unknown reply:",resp)
-#            else: print("Unknown reply:",resp)
         elif verbose: print("Bad checksum!", resp)
         if p_seq>cnt and len(sent)==0:
             if verbose: print("All OK!!!")
