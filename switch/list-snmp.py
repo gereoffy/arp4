@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#! /usr/bin/python3
 
 ####################################################
 # Excample:  ./list-snmp.py 172.17.20.18 NG18- 1/g
@@ -25,7 +25,11 @@ import time
 import string
 import re
 import traceback
-from easysnmp import snmp_get,snmp_walk
+
+try:
+    from easysnmp import snmp_get,snmp_walk
+except:
+    from usnmp import snmp_get,snmp_walk
 
 ######################################################################
 
@@ -40,14 +44,14 @@ from easysnmp import snmp_get,snmp_walk
 #swip="10.191.50.1"  # hp 2650
 #swip="10.200.5.102" # cisco nagy
 #swip="10.200.6.10"   # dlink 3xxx
-#swip="10.200.5.1"   # dlink core
+swip="10.200.5.1"   # dlink core
 #swip="10.90.90.103"   # dlink vision regi
 #swip="192.168.1.66"    # hp 2524 regi
 #swip="192.168.1.45"    # mikrotik rb2011
 #swip="10.100.86.232"  # regi 3com
 #swip="10.100.86.231"   # cicko sg200
 
-swip="192.168.68.250"   # cicko zti
+#swip="192.168.68.250"   # cicko zti
 #swip="192.168.68.253"   # dlink 1500
 #swip="192.168.68.251"   # dlink 1100 szar
 #swip="192.168.68.243"   # dlink 1100 - kell hozza a mib order patch!
@@ -138,7 +142,7 @@ for item in snmp_walk('1.3.6.1.2.1.31.1.1.1.18',hostname=swip, community=swc, ve
     if debug:
         print("NAME %s -> %s"%(port,item.value))
     elif item.value:
-        sys.stderr.write(swname+str(port)+" "+item.value+"\n")
+        sys.stderr.write(swname+str(port)+" "+str(item.value)+"\n")
 #    x=str(item.value).replace(": Gigabit Copper","").replace(" ","")
 #    portname[i]=x[len(portcut):] if portcut and x.startswith(portcut) else x
 
@@ -183,7 +187,7 @@ if cisco:
             try:
                 port=portmap[int(item.value)]
             except:
-                port=snmp_get("1.3.6.1.2.1.17.1.4.1.2."+item.value, hostname=swip, community=swc+"@"+str(vlan), version=2, timeout=2, retries=1).value #.encode('ascii', 'ignore')
+                port=snmp_get("1.3.6.1.2.1.17.1.4.1.2."+str(item.value), hostname=swip, community=swc+"@"+str(vlan), version=2, timeout=2, retries=1).value #.encode('ascii', 'ignore')
 #                print(port)
                 portmap[int(item.value)]=int(port)
             port=portname.get(int(port),str(port))
