@@ -21,26 +21,31 @@ except:
 SNMP_VER1 = const(0x00)
 ASN1_INT = const(0x02)
 ASN1_OCTSTR = const(0x04)
-ASN1_OID = const(0x06)
 ASN1_NULL = const(0x05)
+ASN1_OID = const(0x06)
+
 ASN1_SEQ = const(0x30)
+
 SNMP_GETREQUEST = const(0xa0)
 SNMP_GETNEXTREQUEST = const(0xa1)
 SNMP_GETRESPONSE = const(0xa2)
 SNMP_SETREQUEST = const(0xa3)
 SNMP_TRAP = const(0xa4)
+
+SNMP_IPADDR = const(0x40)
 SNMP_COUNTER = const(0x41)
 SNMP_GUAGE = const(0x42)
 SNMP_TIMETICKS = const(0x43)
-SNMP_IPADDR = const(0x40)
 SNMP_OPAQUE = const(0x44)
 SNMP_NSAPADDR = const(0x45)
+
 SNMP_ERR_NOERROR = const(0x00)
 SNMP_ERR_TOOBIG = const(0x01)
 SNMP_ERR_NOSUCHNAME = const(0x02)
 SNMP_ERR_BADVALUE = const(0x03)
 SNMP_ERR_READONLY = const(0x04)
 SNMP_ERR_GENERR = const(0x05)
+
 SNMP_TRAP_COLDSTART = const(0x0)
 SNMP_TRAP_WARMSTART = const(0x10)
 SNMP_TRAP_LINKDOWN = const(0x2)
@@ -69,12 +74,12 @@ def tobytes_tv(t, v=None):
     if t in _SNMP_SEQs:
         b = v
     elif t == ASN1_OCTSTR:
-        if type(v) is str:
-            b = bytearray(v,'utf-8')
-        elif type(v) in (bytes, bytearray):
+#        print(type(v), v)
+        if type(v) in (bytes, bytearray):
             b = v
         else:
-            raise ValueError('string or buffer required')
+            b = bytearray(v,'utf-8')
+#            raise ValueError('string or buffer required')
     elif t in _SNMP_INTs:
         if v < 0:
             raise ValueError('ASN.1 ints must be >=0')
@@ -127,11 +132,15 @@ def frombytes_tvat(b, ptr):
     if t in _SNMP_SEQs:
         v = bytearray(b[ptr:end])
     elif t == ASN1_OCTSTR:
-        try:
+        v = bytearray(b[ptr:end])
+        if sum([(x<32 or x>127) for x in v])==0: # plain ascii, no control chars/unicodes, convert to string!
+            v = "".join(map(chr, v)) # py2/py3 compatible bytes->str
+#        try:
 #            v = str(b[ptr:end], 'utf-8')
-            v = b[ptr:end].decode("us-ascii")
-        except: #UnicodeDecodeError:
-            v = bytearray(b[ptr:end])
+#            v = b[ptr:end].decode("us-ascii")
+#            v = b[ptr:end].decode("utf-8")
+#        except: #UnicodeDecodeError:
+#            v = bytearray(b[ptr:end])
     elif t in _SNMP_INTs:
         v=0
         while ptr < end:
@@ -250,20 +259,17 @@ class SnmpPacket:
 
 # high-level easysnmp-compatible API:
 
-import time
-my_snmp_id=(int(time.time()*1000000) & 0x3FFFFFFF)|0x40000000
 def snmp_id():
-    global my_snmp_id
-    my_snmp_id+=1
-    return my_snmp_id
+    from time import time
+    return (int(time()*1000000) & 0x3FFFFFFF)|0x40000000
 
-# __repr__ from easysnmp:
+
 class SNMPVariable:
     def __init__(self, oid, typ, value):
         self.oid,self.oid_index=oid.rsplit(".",1)
         self.snmp_type=typ
         self.value=value
-    def __repr__(self):
+    def __repr__(self):  #  from easysnmp
         return (
             "<{0} value={1} (oid={2}, oid_index={3}, snmp_type={4})>".format(
                 self.__class__.__name__,
@@ -273,9 +279,10 @@ class SNMPVariable:
         )
 
 import socket
+from contextlib import closing  # python2 socket() doesnt support context manager :(
 
 def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=True, debug=False, port=161):
-        s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+    with closing(socket.socket(socket.AF_INET,socket.SOCK_DGRAM)) as s:
         s.settimeout(timeout)
         # send a getrequest packet:
         greq = SnmpPacket(type=SNMP_GETREQUEST, community=community, ver=version-1, id=snmp_id())
@@ -307,7 +314,7 @@ def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1
         gresp = SnmpPacket(d[0])
         if debug: print(gresp.varbinds)
         for o in gresp.varbinds:
-            if not o.startswith(oid): return  # itt a vege fuss el vele
+            if not o.startswith(oid): s.close() ; return  # itt a vege fuss el vele
             yield SNMPVariable(o, gresp.varbinds[o][0], gresp.varbinds[o][1])
             gresp.varbinds[o]=None
         gresp.id=greq.id+1
