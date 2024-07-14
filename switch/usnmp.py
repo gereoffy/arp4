@@ -31,6 +31,7 @@ SNMP_GETNEXTREQUEST = const(0xa1)
 SNMP_GETRESPONSE = const(0xa2)
 SNMP_SETREQUEST = const(0xa3)
 SNMP_TRAP = const(0xa4)
+SNMP_BULKGETREQUEST = const(0xa5)
 
 SNMP_IPADDR = const(0x40)
 SNMP_COUNTER = const(0x41)
@@ -59,7 +60,8 @@ _SNMP_SEQs = bytearray([ASN1_SEQ,
                     SNMP_GETRESPONSE,
                     SNMP_GETNEXTREQUEST,
                     SNMP_SETREQUEST,
-                    SNMP_TRAP
+                    SNMP_TRAP,
+                    SNMP_BULKGETREQUEST
                   ])
 
 #ASN.1 int and SNMP derivatives
@@ -241,6 +243,11 @@ class SnmpPacket:
                 + tobytes_tv(ASN1_INT, self.specific_trap) \
                 + tobytes_tv(SNMP_TIMETICKS, self.timestamp) \
                 + b
+        elif self.type == SNMP_BULKGETREQUEST:
+            b = tobytes_tv(ASN1_INT, self.id) \
+                + tobytes_tv(ASN1_INT, 0) \
+                + tobytes_tv(ASN1_INT, 32) \
+                + b
         else:
             b = tobytes_tv(ASN1_INT, self.id) \
                 + tobytes_tv(ASN1_INT, self.err_status) \
@@ -297,35 +304,37 @@ def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1,
         if debug: print(gresp.varbinds)
         return SNMPVariable(oid, gresp.varbinds[oid][0], gresp.varbinds[oid][1])
 
-def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=True, debug=False, port=161):
+def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=True, debug=False, port=161, bulk=True):
     s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     s.settimeout(timeout)
     #build a getnextrequest packet
-    greq = SnmpPacket(type=SNMP_GETNEXTREQUEST, community=community, ver=version-1, id=snmp_id())
+    greq = SnmpPacket(type=(SNMP_BULKGETREQUEST if (bulk and version==2) else SNMP_GETNEXTREQUEST), community=community, ver=version-1, id=snmp_id())
     greq.varbinds[oid] = None
     while True:
         #send getnextrequest:
         data=greq.tobytes()
         if debug: print("Send:",data)
         s.sendto(data, (hostname, port))
-        d = s.recvfrom(1024)
+        d = s.recvfrom(16384) # jumbo frame support ;)
         if debug: print("Rcvd:",d[0])
         #decode the response:
         gresp = SnmpPacket(d[0])
+#        print("Sent %d -> Rcvd %d bytes, %d oids"%(len(data),len(d[0]),len(gresp.varbinds)))
         if debug: print(gresp.varbinds)
         for o in gresp.varbinds:
             if not o.startswith(oid): s.close() ; return  # itt a vege fuss el vele
             yield SNMPVariable(o, gresp.varbinds[o][0], gresp.varbinds[o][1])
             gresp.varbinds[o]=None
-        gresp.id=greq.id+1
-        gresp.type = SNMP_GETNEXTREQUEST
-        greq=gresp
+        greq.id+=1
+        greq.varbinds={o:None}
+#        gresp.type = SNMP_GETNEXTREQUEST
+#        greq=gresp
 
 
 if __name__ == '__main__':
 
     swver=2
-    swip="10.200.6.11"
+    swip="10.200.6.21"
     swc="public"
     oid = "1.3.6.1.2.1.1.3.0" # uptime
 
@@ -335,11 +344,11 @@ if __name__ == '__main__':
 # <SNMPVariable value='3:40' (oid='.1.3.6.1.2.1.31.1.1.1.1', oid_index='168', snmp_type='OCTETSTR')>
 # <SNMPVariable value=997977330 (oid='1.3.6.1.2.1.1.3', oid_index='0', snmp_type=67)>
 
-    res=snmp_get("1.3.6.1.2.1.1.7.0", hostname=swip, community=swc, version=swver, timeout=2, retries=1, use_numeric=True)
-    print(res)
+#    res=snmp_get("1.3.6.1.2.1.1.7.0", hostname=swip, community=swc, version=swver, timeout=2, retries=1, use_numeric=True)
+#    print(res)
 #    osi=int(res.value)
 
-    for item in snmp_walk('1.3.6.1.2.1.17.4.3.1.1',hostname=swip, community=swc, version=2, use_numeric=True): print(item)
+    for item in snmp_walk('1.3.6.1.2.1.17.7.1.2.2.1.2',hostname=swip, community=swc, version=2, use_numeric=True): print(item)
 
 #    res=usnmp_get(oid, hostname=swip, community=swc, version=swver, timeout=2, retries=1, use_numeric=True)
 #    print(res)
