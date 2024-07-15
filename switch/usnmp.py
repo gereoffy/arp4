@@ -18,7 +18,7 @@ except:
 
 SNMP_VER1 = const(0x00)
 
-ASN1_NONE = const(0x00)  # ???
+#ASN1_NONE = const(0x00)  # ???
 ASN1_BOOL = const(0x01)
 ASN1_INT = const(0x02)
 ASN1_BITSTR = const(0x03)
@@ -84,7 +84,7 @@ _SNMP_INTs = bytearray([ASN1_INT, ASN1_BOOL,
                     SNMP_UINTEGER32
                   ])
 
-_SNMP_ERRs = bytearray([ASN1_NONE,
+_SNMP_ERRs = bytearray([ #ASN1_NONE,
                     SNMP_NoSuchObject,
                     SNMP_NoSuchInstance,
                     SNMP_EndOfMIBView
@@ -115,7 +115,8 @@ def tobytes_tv(t, v=None):
         b = bytearray()
     elif t == ASN1_OID:
         oid = [int(x) for x in v.split('.')]
-        if len(oid)==1 or oid[1]>=40:
+#        if len(oid)==1 or oid[1]>=40:
+        if len(oid)==1:
             b = bytearray([oid[0]*40]) ; oid=oid[1:]
         else:  #first two indexes are encoded in single byte:
             b = bytearray([oid[0]*40 + oid[1]]) ; oid=oid[2:]
@@ -147,10 +148,12 @@ def tobytes_len(l):
         return bytearray([0x80+len(b)]) + b
 
 def frombytes_tvat(b, ptr):
+    # frombytes_tvat bytearray(b'\x04\x82\x01\x00\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff')
     t = b[ptr]
     l, l_incr = frombytes_lenat(b, ptr)
     ptr+= 1+l_incr
     end = ptr+l
+#    print("From: t=",t,l,l_incr,b[ptr:end],b[end:end+8])
     if t in _SNMP_SEQs:
         v = bytearray(b[ptr:end])
     elif t == ASN1_OCTSTR:
@@ -175,8 +178,9 @@ def frombytes_tvat(b, ptr):
         #first 2 indexes are encoded in single byte
 #        print("OID:",b[ptr],b[ptr+1])
         v = str( b[ptr]//0x28 )
-        if b[ptr]%0x28 != 0:
+        if l>1 or b[ptr]%0x28 != 0:
             v += '.' + str( b[ptr]%0x28 )
+#        v = str( b[ptr]//0x28 ) + '.' + str( b[ptr]%0x28 ) # example: 1.0.8802.1.1.1.1.2.1.1.1
         ptr += 1
         ob = 0
         while ptr < end:
@@ -186,13 +190,15 @@ def frombytes_tvat(b, ptr):
                 v += '.' + str((ob*0x80)+b[ptr])
                 ob = 0
             ptr += 1
+#        print(v)
     elif t == SNMP_IPADDR:
         v = ''
         while ptr < end:
             v += '.' + str(b[ptr]) if v!='' else str(b[ptr])
             ptr += 1
     elif t in _SNMP_ERRs:
-        v = None # bulk get returns type=0 OIDs at the end!
+#        print("ERR type found:",t,"len=",l)
+        v = None # bulk get returns type=0x82 at the end!
     elif t in (SNMP_OPAQUE, SNMP_NSAPADDR):
         raise Exception('not implemented', t)
     else:
@@ -200,12 +206,12 @@ def frombytes_tvat(b, ptr):
     return t, v
 
 def frombytes_lenat(b, ptr):
-#    print(b,type(b),ptr,b[0])
     if b[ptr+1]&0x80 == 0x80:
+        lol=b[ptr+1]&0x7f # len of len
         l = 0
-        for i in b[ptr+2 : ptr+2+b[ptr+1]&0x7f]:
+        for i in b[ptr+2 : ptr+2+lol]:
             l = l*0x100 + i
-        return l, 1 + b[ptr+1]&0x7f
+        return l, 1 + lol
     else:
         return b[ptr+1], 1
 
@@ -213,13 +219,15 @@ def frombytes_lenat(b, ptr):
 
 
 class SNMPVariable:
-    def __init__(self, oid, tv):
+    def __init__(self, oid, tv=None):
         if tv == None: t,v = ASN1_NULL, None
         else:          t,v = tv
-        self.oid,self.oid_index=oid.rsplit(".",1)
+        self.raw_oid=oid
         self.snmp_type=t
         self.value=v
-    def get(self): return self.oid+"."+self.oid_index, self.snmp_type,self.value
+        try: self.oid,self.oid_index=oid.rsplit(".",1)
+        except: self.oid,self.oid_index="",oid
+    def get(self): return self.raw_oid, self.snmp_type, self.value
     def __repr__(self):  #  from easysnmp
         return (
             "<{0} value={1} (oid={2}, oid_index={3}, snmp_type={4})>".format(
@@ -314,7 +322,7 @@ def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1,
         s.settimeout(timeout)
         # send a getrequest packet:
         greq = SnmpPacket(type=SNMP_GETREQUEST, community=community, ver=version-1, id=snmp_id())
-        greq.varbinds = [SNMPVariable(oid,None)]
+        greq.varbinds = [SNMPVariable(oid)]
         data=greq.tobytes()
         if debug: print("Send:",data)
         s.sendto(data, (hostname, port))
@@ -334,7 +342,7 @@ def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1
     o=oid
     while True:
         #send getnextrequest:
-        greq.varbinds = [SNMPVariable(o,None)]
+        greq.varbinds = [SNMPVariable(o)]
         data=greq.tobytes()
         if debug: print("Send:",data)
         s.sendto(data, (hostname, port))
@@ -355,6 +363,7 @@ if __name__ == '__main__':
 
     swver=2
     swip="10.200.6.21"
+#    swip="10.200.5.1"
     swc="public"
     oid = "1.3.6.1.2.1.1.3.0" # uptime
 
@@ -368,7 +377,11 @@ if __name__ == '__main__':
 #    print(res)
 #    osi=int(res.value)
 
-    for item in snmp_walk('1.3.111.2.802.1.1.8',hostname=swip, community=swc, version=2, use_numeric=True, timeout=10): print(item)
+# 1.0 	standard, std
+# 1.1 	registration-authority
+# 1.2 	member-body
+# 1.3 	identified-organization, org, iso-identified-organization
+    for item in snmp_walk('1',hostname=swip, community=swc, version=2, use_numeric=True, timeout=10): print(item)
 
 #    res=usnmp_get(oid, hostname=swip, community=swc, version=swver, timeout=2, retries=1, use_numeric=True)
 #    print(res)
