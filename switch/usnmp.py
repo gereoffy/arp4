@@ -3,8 +3,6 @@
 # code based on https://github.com/PinkInk/upylib/tree/master/usnmp
 # changes:  py2 support (bytes->bytearray), ID generator, easysnmp api wrapper, disabled octetstr->utf8 decoding,
 
-from collections import OrderedDict
-
 _SNMP_PROPS = ('ver', 'community')
 _SNMP_TRAP_PROPS = ('enterprise', 'agent_addr', 'generic_trap', 'specific_trap', 'timestamp')
 _SNMP_GETSET_PROPS = ('id', 'err_status', 'err_id')
@@ -214,6 +212,22 @@ def frombytes_lenat(b, ptr):
 
 
 
+class SNMPVariable:
+    def __init__(self, oid, tv):
+        if tv == None: t,v = ASN1_NULL, None
+        else:          t,v = tv
+        self.oid,self.oid_index=oid.rsplit(".",1)
+        self.snmp_type=t
+        self.value=v
+    def get(self): return self.oid+"."+self.oid_index, self.snmp_type,self.value
+    def __repr__(self):  #  from easysnmp
+        return (
+            "<{0} value={1} (oid={2}, oid_index={3}, snmp_type={4})>".format(
+                self.__class__.__name__,
+                repr(self.value), repr(self.oid),
+                repr(self.oid_index), repr(self.snmp_type)
+            )
+        )
 
 
 class SnmpPacket:
@@ -237,30 +251,23 @@ class SnmpPacket:
         else:
             ptr = self._frombytes_props(b, ptr, _SNMP_GETSET_PROPS)
         ptr += 1 + frombytes_lenat(b, ptr)[1]
-        try:
-            self.varbinds = OrderedDict()
-        except:
-            self.varbinds = {}
+        self.varbinds = [] # array of SNMPVariable
         while ptr < len(b):
             ptr += 1 + frombytes_lenat(b, ptr)[1] #step into seq
             oid = frombytes_tvat(b, ptr)[1]
+            if not oid: break # EOF?
             ptr += 1 + sum(frombytes_lenat(b, ptr))
             tv = frombytes_tvat(b, ptr)
             ptr += 1 + sum(frombytes_lenat(b, ptr))
-#            print("+OID:",oid)
-            if not oid or oid in self.varbinds: break # EOF?
-            self.varbinds[oid] = tv
+            self.varbinds.append(SNMPVariable(oid,tv))
         for arg in kwargs:
             if hasattr(self, arg):
                 setattr(self, arg, kwargs[arg])
 
     def tobytes(self):
         b = bytearray()
-        for oid in self.varbinds:
-            if self.varbinds[oid] == None:
-                t,v = ASN1_NULL, None
-            else:
-                t,v = self.varbinds[oid]
+        for var in self.varbinds:
+            oid,t,v = var.get()
             b += tobytes_tv(ASN1_SEQ, tobytes_tv(ASN1_OID, oid) + tobytes_tv(t,v))
         b = tobytes_tv(ASN1_SEQ, b)
         if self.type == SNMP_TRAP:
@@ -298,19 +305,6 @@ def snmp_id():
     return (int(time()*1000000) & 0x3FFFFFFF)|0x40000000
 
 
-class SNMPVariable:
-    def __init__(self, oid, typ, value):
-        self.oid,self.oid_index=oid.rsplit(".",1)
-        self.snmp_type=typ
-        self.value=value
-    def __repr__(self):  #  from easysnmp
-        return (
-            "<{0} value={1} (oid={2}, oid_index={3}, snmp_type={4})>".format(
-                self.__class__.__name__,
-                repr(self.value), repr(self.oid),
-                repr(self.oid_index), repr(self.snmp_type)
-            )
-        )
 
 import socket
 from contextlib import closing  # python2 socket() doesnt support context manager :(
@@ -320,7 +314,7 @@ def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1,
         s.settimeout(timeout)
         # send a getrequest packet:
         greq = SnmpPacket(type=SNMP_GETREQUEST, community=community, ver=version-1, id=snmp_id())
-        greq.varbinds[oid] = None
+        greq.varbinds = [SNMPVariable(oid,None)]
         data=greq.tobytes()
         if debug: print("Send:",data)
         s.sendto(data, (hostname, port))
@@ -329,7 +323,8 @@ def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1,
         # decode the response:
         gresp = SnmpPacket(d[0])
         if debug: print(gresp.varbinds)
-        return SNMPVariable(oid, gresp.varbinds[oid][0], gresp.varbinds[oid][1])
+        if len(gresp.varbinds)!=1: return None # WTF
+        return gresp.varbinds[0]
 
 def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=True, debug=False, port=161, bulk=True):
     s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
@@ -339,7 +334,7 @@ def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1
     o=oid
     while True:
         #send getnextrequest:
-        greq.varbinds={o:None}
+        greq.varbinds = [SNMPVariable(o,None)]
         data=greq.tobytes()
         if debug: print("Send:",data)
         s.sendto(data, (hostname, port))
@@ -349,10 +344,10 @@ def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1
         gresp = SnmpPacket(d[0])
         print("Sent %d -> Rcvd %d bytes, %d oids"%(len(data),len(d[0]),len(gresp.varbinds)))
         if debug: print(gresp.varbinds)
-        for o in gresp.varbinds:
-#            print(o, gresp.varbinds[o])
-            if not o.startswith(oid) or gresp.varbinds[o][0] in _SNMP_ERRs: s.close() ; return  # itt a vege fuss el vele
-            yield SNMPVariable(o, gresp.varbinds[o][0], gresp.varbinds[o][1])
+        for var in gresp.varbinds:
+            o,t,v=var.get()
+            if not o or not o.startswith(oid) or t in _SNMP_ERRs: s.close() ; return  # itt a vege fuss el vele
+            yield var
         greq.id+=1
 
 
