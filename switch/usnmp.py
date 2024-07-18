@@ -3,6 +3,17 @@
 # code based on https://github.com/PinkInk/upylib/tree/master/usnmp
 # changes:  py2 support (bytes->bytearray), ID generator, easysnmp api wrapper, disabled octetstr->utf8 decoding,
 
+# conversion config parameters:
+def snmp_config(int2str=False,oidsplit=False,octet2str=1):
+    global config_int2str    # convert int to str? (easysnmp does that)
+    global config_oidsplit   # split oid to base+index, aka easysnmp with use_numeric=True
+    global config_octet2str  # 0=always bytes  1=bytes or ascii   2=python2 str   3=python3 str  8=utf8
+    config_int2str=int2str
+    config_oidsplit=oidsplit
+    config_octet2str=octet2str
+snmp_config() # set defaults
+
+
 _SNMP_PROPS = ('ver', 'community')
 _SNMP_TRAP_PROPS = ('enterprise', 'agent_addr', 'generic_trap', 'specific_trap', 'timestamp')
 _SNMP_GETSET_PROPS = ('id', 'err_status', 'err_id')
@@ -50,6 +61,24 @@ SNMP_TRAP = const(0xa4)
 SNMP_BULKGETREQUEST = const(0xa5)
 SNMP_REPORT = const(0xa8)
 
+snmp_typ2str={
+    1:"BOOL",
+    2:"INTEGER",
+    3:"BITS",
+    4:"OCTETSTR",
+    5:"NULL",
+    6:"OBJECTID",
+    0x40:"IPADDR",
+    0x41:"COUNTER",
+    0x42:"GAUGE",
+    0x43:"TICKS",
+    0x44:"OPAQUE",
+    0x46:"COUNTER64",
+    0x47:"UNSIGNED32",
+    0x81:"NOSUCHINSTANCE",
+    0x80:"NOSUCHOBJECT",
+    0x82:"ENDOFMIBVIEW",
+}
 
 SNMP_ERR_NOERROR = const(0x00)
 SNMP_ERR_TOOBIG = const(0x01)
@@ -102,6 +131,7 @@ def tobytes_tv(t, v=None):
             b = bytearray(v,'utf-8')
 #            raise ValueError('string or buffer required')
     elif t in _SNMP_INTs:
+        v=int(v)
         if v < 0:
             raise ValueError('ASN.1 ints must be >=0')
         else:
@@ -158,8 +188,12 @@ def frombytes_tvat(b, ptr):
         v = bytearray(b[ptr:end])
     elif t == ASN1_OCTSTR:
         v = bytearray(b[ptr:end])
-        if sum([(x<32 or x>127) for x in v])==0: # plain ascii, no control chars/unicodes, convert to string!
+        if config_octet2str==1 and sum([(x<32 or x>127) for x in v])==0: # plain ascii, no control chars/unicodes, convert to string!
             v = "".join(map(chr, v)) # py2/py3 compatible bytes->str
+        if config_octet2str==2: v = str(v) # python2
+        if config_octet2str==3: v = v.decode("latin-1") # python3
+        if config_octet2str==8: v = v.decode("utf-8")
+
 #        try:
 #            v = str(b[ptr:end], 'utf-8')
 #            v = b[ptr:end].decode("us-ascii")
@@ -219,15 +253,20 @@ def frombytes_lenat(b, ptr):
 
 
 class SNMPVariable:
-    def __init__(self, oid, tv=None):
+    def __init__(self, oid, tv=None, oidsplit=None):
         if tv == None: t,v = ASN1_NULL, None
         else:          t,v = tv
         self.raw_oid=oid
-        self.snmp_type=t
-        self.value=v
-        try: self.oid,self.oid_index=oid.rsplit(".",1)
-        except: self.oid,self.oid_index="",oid
-    def get(self): return self.raw_oid, self.snmp_type, self.value
+        self.raw_type=t
+        self.snmp_type=snmp_typ2str[t]
+        self.value=str(v) if config_int2str and t in _SNMP_INTs else v
+        # OID split?
+        try: oid_base,oid_index=oid.rsplit(".",1)
+        except: oid_base,oid_index="",oid
+        if oidsplit==None: oidsplit=config_oidsplit
+        self.oid,self.oid_index = (oid_base,oid_index) if oidsplit else (oid,"")
+        self.idx = int(oid_index)
+    def get(self): return self.raw_oid, self.raw_type, self.value
     def __repr__(self):  #  from easysnmp
         return (
             "<{0} value={1} (oid={2}, oid_index={3}, snmp_type={4})>".format(
@@ -250,6 +289,7 @@ class SnmpPacket:
                 b = bytearray(_SNMP_GETSET_TEMPL)
         else:
             raise ValueError('buffer or type=x required')
+        oidsplit = kwargs.get("oidsplit",None)
         ptr = 1 + frombytes_lenat(b, 0)[1]
         ptr = self._frombytes_props(b, ptr, _SNMP_PROPS)
         self.type = b[ptr]
@@ -267,7 +307,7 @@ class SnmpPacket:
             ptr += 1 + sum(frombytes_lenat(b, ptr))
             tv = frombytes_tvat(b, ptr)
             ptr += 1 + sum(frombytes_lenat(b, ptr))
-            self.varbinds.append(SNMPVariable(oid,tv))
+            self.varbinds.append(SNMPVariable(oid,tv,oidsplit=oidsplit))
         for arg in kwargs:
             if hasattr(self, arg):
                 setattr(self, arg, kwargs[arg])
@@ -317,7 +357,7 @@ def snmp_id():
 import socket
 from contextlib import closing  # python2 socket() doesnt support context manager :(
 
-def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=True, debug=False, port=161):
+def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=None, debug=False, port=161):
     with closing(socket.socket(socket.AF_INET,socket.SOCK_DGRAM)) as s:
         s.settimeout(timeout)
         # send a getrequest packet:
@@ -329,12 +369,12 @@ def snmp_get(oid, hostname, community="public", version=2, timeout=2, retries=1,
         d = s.recvfrom(1024)
         if debug: print("Rcvd:",d[0])
         # decode the response:
-        gresp = SnmpPacket(d[0])
+        gresp = SnmpPacket(d[0],oidsplit=use_numeric)
         if debug: print(gresp.varbinds)
         if len(gresp.varbinds)!=1: return None # WTF
         return gresp.varbinds[0]
 
-def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=True, debug=False, port=161, bulk=True):
+def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1, use_numeric=None, debug=False, port=161, bulk=True):
     s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
     s.settimeout(timeout)
     #build a getnextrequest packet
@@ -349,8 +389,8 @@ def snmp_walk(oid, hostname, community="public", version=2, timeout=2, retries=1
         d = s.recvfrom(16384) # jumbo frame support ;)
         if debug: print("Rcvd:",d[0])
         #decode the response:
-        gresp = SnmpPacket(d[0])
-        print("Sent %d -> Rcvd %d bytes, %d oids"%(len(data),len(d[0]),len(gresp.varbinds)))
+        gresp = SnmpPacket(d[0],oidsplit=use_numeric)
+#        print("Sent %d -> Rcvd %d bytes, %d oids"%(len(data),len(d[0]),len(gresp.varbinds)))
         if debug: print(gresp.varbinds)
         for var in gresp.varbinds:
             o,t,v=var.get()
